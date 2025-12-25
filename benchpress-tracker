@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Bench-Press Tracker (Voice + Target Reps)</title>
+<title>Bench-Press Tracker (Voice + Target + Click)</title>
 <style>
   html,body{
     margin:0;height:100%;background:#0a0d12;color:#e6eaf0;
@@ -17,15 +17,17 @@
     background:rgba(0,0,0,0.4);padding:12px 26px;border-radius:14px;
     backdrop-filter:blur(6px);
   }
-  #buttons{position:absolute;bottom:25px;left:50%;transform:translateX(-50%);
-    display:flex;gap:20px;}
-  button{
-    background:linear-gradient(145deg,#18232f,#10151d);color:#fff;
-    border:1px solid rgba(255,255,255,0.2);border-radius:50%;
-    width:120px;height:120px;font-size:20px;font-weight:600;
-    cursor:pointer;transition:background .3s,transform .1s;
+  #buttons{
+    position:absolute;bottom:25px;left:50%;transform:translateX(-50%);
+    display:flex;gap:20px;
   }
-  button:hover{background:#1a2532;}
+  .ctrlbtn{
+    background:linear-gradient(145deg,#18232f,#10151d);color:#fff;
+    border:1px solid rgba(255,255,255,0.2);border-radius:8px;
+    padding:10px 20px;font-size:16px;cursor:pointer;
+    transition:background .3s,transform .1s;
+  }
+  .ctrlbtn:hover{background:#1a2532;}
   #controls{
     width:300px;background:rgba(20,26,34,.9);border-left:1px solid rgba(255,255,255,.05);
     padding:24px;display:flex;flex-direction:column;gap:20px;backdrop-filter:blur(8px);
@@ -60,6 +62,10 @@
     <canvas id="overlay"></canvas>
     <div id="hud">0</div>
     <div id="startOverlay"><button id="startBtn">Start</button></div>
+    <div id="buttons">
+      <button id="resetBtn" class="ctrlbtn">Reset</button>
+      <button id="pauseBtn" class="ctrlbtn">Pause</button>
+    </div>
   </div>
 
   <div id="controls">
@@ -68,7 +74,6 @@
       <label for="targetReps">Target Reps per Set</label>
       <input id="targetReps" type="number" min="1" max="100" value="15">
     </div>
-
     <h3>Thresholds</h3>
     <div>
       <label for="thHigh">Complete (straight) ≥</label>
@@ -78,12 +83,10 @@
       <label for="thLow">Reset (bottom) ≤</label>
       <input id="thLow" type="number" min="0" max="80" value="50">
     </div>
-
     <div class="metric">
       <div class="metric-label">Current Straightness</div>
       <div id="currentPct" class="metric-value">0%</div>
     </div>
-
     <p class="note">Say “Start”, “Stop”, “Pause”, “Unpause”, or “Resume” to control tracking hands-free.</p>
   </div>
 </div>
@@ -99,6 +102,8 @@ const hud=document.getElementById("hud");
 const currentPct=document.getElementById("currentPct");
 const startBtn=document.getElementById("startBtn");
 const startOverlay=document.getElementById("startOverlay");
+const pauseBtn=document.getElementById("pauseBtn");
+const resetBtn=document.getElementById("resetBtn");
 const thHighEl=document.getElementById("thHigh");
 const thLowEl=document.getElementById("thLow");
 const targetRepsEl=document.getElementById("targetReps");
@@ -107,19 +112,25 @@ let landmarker;
 let reps=0,passedBottom=false,smoothed=0,paused=true;
 let thHigh=90,thLow=50,minAngle=50,maxAngle=175,targetReps=15;
 
-// ----------- AUDIO & VOICE FUNCTIONS -----------
+// --- SOUNDS ---
+function playClick(){
+  const ctxA=new (window.AudioContext||window.webkitAudioContext)();
+  const o=ctxA.createOscillator(),g=ctxA.createGain();
+  o.connect(g).connect(ctxA.destination);
+  o.frequency.value=2000;g.gain.value=0.15;
+  o.start();o.stop(ctxA.currentTime+0.05);
+}
 function speak(text){
   const u=new SpeechSynthesisUtterance(text);
   u.rate=1.1;
   speechSynthesis.speak(u);
 }
 function playTada(){
-  const tada=new Audio("https://win98icons.alexmeub.com/sounds/tada.wav");
-  tada.volume=0.5;
-  tada.play();
+  const tada=new Audio("https://www.winhistory.de/more/winstart/mp3/win31.mp3");
+  tada.volume=0.5;tada.play();
 }
 
-// ----------- CORE MATH -----------
+// --- MATH ---
 function angle(a,b,c){
   const v1={x:a.x-b.x,y:a.y-b.y},v2={x:c.x-b.x,y:c.y-b.y};
   const dot=v1.x*v2.x+v1.y*v2.y;
@@ -128,18 +139,19 @@ function angle(a,b,c){
 }
 function mapAngleToPct(a){return Math.max(0,Math.min(1,(a-minAngle)/(maxAngle-minAngle)))*100;}
 
-// ----------- REP LOGIC -----------
+// --- REPS ---
 function repLogic(p){
   if(paused)return;
   if(p<=thLow)passedBottom=true;
   if(passedBottom&&p>=thHigh){
     reps++;hud.textContent=reps;passedBottom=false;
+    playClick();
     speak(reps.toString());
     if(reps>=targetReps){playTada();}
   }
 }
 
-// ----------- CAMERA SETUP -----------
+// --- CAMERA ---
 async function setupCamera(){
   const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user"},audio:false});
   video.srcObject=s;await video.play();
@@ -147,7 +159,7 @@ async function setupCamera(){
 }
 function resizeCanvas(){canvas.width=video.videoWidth;canvas.height=video.videoHeight;}
 
-// ----------- POSE SETUP -----------
+// --- LANDMARKER ---
 async function setupLandmarker(){
   const fs=await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.10/wasm");
   landmarker=await PoseLandmarker.createFromOptions(fs,{
@@ -159,7 +171,7 @@ async function setupLandmarker(){
   console.log("Pose model loaded.");
 }
 
-// ----------- DRAWING -----------
+// --- DRAW ---
 function drawPose(lms){
   const draw=new DrawingUtils(ctx);
   draw.drawLandmarks(lms,{radius:2,color:"#00ffcc"});
@@ -167,11 +179,10 @@ function drawPose(lms){
   const s=lms[12],e=lms[14],w=lms[16];
   const W=canvas.width,H=canvas.height;
   ctx.strokeStyle="yellow";ctx.lineWidth=4;
-  ctx.beginPath();ctx.moveTo(s.x*W,s.y*H);
-  ctx.lineTo(e.x*W,e.y*H);ctx.lineTo(w.x*W,w.y*H);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(s.x*W,s.y*H);ctx.lineTo(e.x*W,e.y*H);ctx.lineTo(w.x*W,w.y*H);ctx.stroke();
 }
 
-// ----------- MAIN LOOP -----------
+// --- LOOP ---
 async function loop(ts){
   requestAnimationFrame(loop);
   if(!landmarker)return;
@@ -191,22 +202,20 @@ async function loop(ts){
   repLogic(smoothed);
 }
 
-// ----------- CONTROLS -----------
+// --- CONTROLS ---
 function resetReps(){reps=0;hud.textContent="0";passedBottom=false;}
 function togglePause(state){
   paused=state!==undefined?state:!paused;
-  if(paused){
-    startOverlay.style.display="flex";
-  }else{
-    startOverlay.style.display="none";
-  }
+  if(paused){startOverlay.style.display="flex";}else{startOverlay.style.display="none";}
 }
 startBtn.onclick=()=>togglePause(false);
+pauseBtn.onclick=()=>togglePause(true);
+resetBtn.onclick=()=>resetReps();
 thHighEl.oninput=()=>thHigh=parseFloat(thHighEl.value)||90;
 thLowEl.oninput=()=>thLow=parseFloat(thLowEl.value)||50;
 targetRepsEl.oninput=()=>targetReps=parseInt(targetRepsEl.value)||15;
 
-// ----------- VOICE COMMANDS -----------
+// --- VOICE COMMANDS ---
 function initVoiceCommands(){
   if(!('webkitSpeechRecognition' in window||'SpeechRecognition' in window)){
     console.warn("SpeechRecognition not supported.");return;
@@ -216,18 +225,21 @@ function initVoiceCommands(){
   recog.continuous=true;
   recog.lang="en-US";
   recog.interimResults=false;
+  recog.maxAlternatives=1;
+
   recog.onresult=(e)=>{
     const cmd=e.results[e.results.length-1][0].transcript.trim().toLowerCase();
     console.log("Heard:",cmd);
     if(cmd.includes("start")||cmd.includes("resume")||cmd.includes("unpause"))togglePause(false);
     if(cmd.includes("pause")||cmd.includes("stop"))togglePause(true);
   };
-  recog.onerror=(err)=>console.warn("SpeechRec error:",err);
+  recog.onerror=(err)=>{console.warn("SpeechRec error:",err);setTimeout(()=>recog.start(),2000);};
+  recog.onend=()=>setTimeout(()=>recog.start(),1500);
   recog.start();
   console.log("Voice control active.");
 }
 
-// ----------- INIT -----------
+// --- INIT ---
 (async()=>{
   await setupCamera();
   await setupLandmarker();
